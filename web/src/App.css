@@ -79,6 +79,7 @@
 .channel-mix { display: grid; gap: 5px; min-width: 0; }
 .channel-mix label > span { display: flex; justify-content: space-between; font: 9px var(--mono); color: var(--muted); }
 .channel-mix input { accent-color: var(--track-color); }
+.channel-mix meter { height: 6px; width: 100%; accent-color: var(--track-color); margin-top: 2px; }
 .channel-mix .pan { display: flex; align-items: center; gap: 9px; padding: 0 10px; }
 .channel-mix .pan input { height: 12px; }
 .position-strip { display: flex; gap: 20px; padding: 16px 0; align-items: center; font: 9px var(--mono); color: var(--muted); }

@@ -167,6 +167,12 @@ class AudioDevicesDialog(QDialog):
         if input_channel is None or output_channel is None:
             return
         try:
+            if self.engine.stream is not None and self.engine.mode == "stopped":
+                try:
+                    self.engine.stream.stop()
+                finally:
+                    self.engine.stream.close()
+                    self.engine.stream = None
             sd.check_input_settings(device=self.inputs.currentData(), channels=input_channel + self.input_width,
                                     dtype="float32", samplerate=SAMPLE_RATE)
             sd.check_output_settings(device=self.outputs.currentData(), channels=output_channel + 2,
@@ -178,6 +184,7 @@ class AudioDevicesDialog(QDialog):
         except Exception as error:
             QMessageBox.warning(self, "Unsupported audio settings",
                                 f"The selected devices could not be opened together at 44.1 kHz.\n\n{error}")
+            self.engine.update_monitoring()
             return
         self.engine.input_device = self.inputs.currentData()
         self.engine.output_device = self.outputs.currentData()
@@ -185,7 +192,12 @@ class AudioDevicesDialog(QDialog):
         self.engine.output_channel = output_channel
         self.engine.input_gain = self.gain.value()
         self.engine.recording_offset = round(self.offset.value() * SAMPLE_RATE / 1000)
+        self.engine.update_monitoring()
         super().accept()
+
+    def reject(self) -> None:
+        self.engine.update_monitoring()
+        super().reject()
 
 
 class RenderJob(QThread):
@@ -228,6 +240,35 @@ class LevelMeter(QWidget):
         horizontal = 8 + min(1, max(0, (decibels + 40) / 40)) * 60
         painter.setPen(QPen(QColor("#b43f46" if self.level >= 1 else "#26392e"), 2))
         painter.drawLine(39, 32, round(horizontal), 14)
+
+
+class FaderLevelMeter(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.level = 0.0
+        self.setFixedWidth(8)
+        self.setMinimumHeight(115)
+        self.setToolTip("Track peak audio level preview")
+
+    def setValue(self, value: float):
+        level = value / 100 if value > 1 else float(value)
+        self.level = max(level, self.level * 0.75)
+        self.setAccessibleDescription(f"{20 * math.log10(max(self.level, 0.0001)):.1f} dBFS")
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        rect = self.rect()
+        painter.fillRect(rect, QColor("#f1f3e9"))
+        painter.setPen(QPen(QColor("#9ca79d"), 1))
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        decibels = 20 * math.log10(max(self.level, 0.0001))
+        fraction = min(1.0, max(0.0, (decibels + 40) / 40))
+        fill_height = round(fraction * (rect.height() - 2))
+        if fill_height > 0:
+            fill_rect = QRect(1, rect.height() - 1 - fill_height, rect.width() - 2, fill_height)
+            color = QColor("#b43f46") if self.level >= 1.0 else QColor("#26392e")
+            painter.fillRect(fill_rect, color)
 
 
 class BounceDialog(QDialog):
@@ -454,13 +495,19 @@ class ChannelStrip(QWidget):
         self.pan.setAccessibleName(f"Track {index + 1} pan")
         self.pan.valueChanged.connect(self.set_pan)
         layout.addWidget(self.pan)
+        fader_layout = QHBoxLayout()
+        fader_layout.setContentsMargins(0, 0, 0, 0)
+        fader_layout.setSpacing(4)
         self.volume = QSlider(Qt.Orientation.Vertical)
         self.volume.setRange(0, 100)
         self.volume.setMinimumHeight(115)
         self.volume.setToolTip("Track playback volume")
         self.volume.setAccessibleName(f"Track {index + 1} volume")
         self.volume.valueChanged.connect(self.set_volume)
-        layout.addWidget(self.volume, 1, Qt.AlignmentFlag.AlignHCenter)
+        fader_layout.addWidget(self.volume, 1)
+        self.level_meter = FaderLevelMeter()
+        fader_layout.addWidget(self.level_meter)
+        layout.addLayout(fader_layout, 1)
         self.volume_label = QLabel("80%")
         self.volume_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.volume_label)
@@ -1006,6 +1053,7 @@ class StudioWindow(QMainWindow):
             strip.arm.blockSignals(True)
             strip.arm.setChecked(strip.index == self.armed)
             strip.arm.blockSignals(False)
+        self.engine.monitor_track = self.armed
         self.update_controls()
 
     def seek_value(self, value: int) -> None:
@@ -1137,6 +1185,7 @@ class StudioWindow(QMainWindow):
             control.blockSignals(True)
             control.setChecked(value)
             control.blockSignals(False)
+        self.engine.update_monitoring()
         self.update_title()
         self.update_controls()
         self.tick()
@@ -1160,11 +1209,18 @@ class StudioWindow(QMainWindow):
         self.seek_slider.blockSignals(True)
         self.seek_slider.setValue(round(self.engine.position / self.duration * 10000))
         self.seek_slider.blockSignals(False)
-        for strip in self.strips:
+        for index, strip in enumerate(self.strips):
             if self.follow_button.isChecked():
                 strip.waveform.position = self.engine.position
             strip.waveform.duration = self.duration
             strip.waveform.update()
+            if self.engine.running:
+                peak = self.engine.track_peaks[index] if index < len(self.engine.track_peaks) else 0.0
+                strip.level_meter.setValue(peak)
+            elif self.armed == index and self.engine.input_peak > 0:
+                strip.level_meter.setValue(self.engine.input_peak)
+            else:
+                strip.level_meter.setValue(0.0)
         self.input_meter.setValue(min(100, int(self.engine.input_peak * 100)))
         self.output_meter.setValue(min(100, int(self.engine.output_peak * 100)))
         self.clip_label.setStyleSheet("color: #b43f46; font-weight: bold;" if self.engine.clipped else "color: #89948c;")
@@ -1328,6 +1384,7 @@ class StudioWindow(QMainWindow):
             strip.arm.blockSignals(True)
             strip.arm.setChecked(False)
             strip.arm.blockSignals(False)
+        self.engine.monitor_track = None
         self.refresh()
 
     def new_song(self) -> None:

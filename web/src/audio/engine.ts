@@ -11,6 +11,7 @@ export class AudioEngine {
   position = 0
   peak = 0
   inputPeak = 0
+  trackPeaks: number[] = [0, 0, 0, 0]
   clipped = false
   onStop: (capture: Capture | null, warning?: string) => void = () => {}
   private sources: AudioBufferSourceNode[] = []
@@ -153,12 +154,33 @@ export class AudioEngine {
     })
   }
 
-  tick(): number {
+  tick(song?: Song): number {
     if (this.mode !== 'stopped' && this.context) {
       this.position = Math.min(this.end, this.origin + Math.max(0, this.context.currentTime - this.begin) * SAMPLE_RATE)
       this.analyser?.getFloatTimeDomainData(this.meter)
       this.peak = this.meter.reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0)
       this.clipped ||= this.peak >= 0.99
+
+      if (song) {
+        this.trackPeaks = song.tracks.map((track, index) => {
+          if (index === this.armed && this.mode === 'recording') {
+            return this.inputPeak
+          }
+          const pos = Math.round(this.position)
+          let peak = 0
+          if (pos < track.audio.length && trackGain(song, index, this.armed) > 0) {
+            const end = Math.min(track.audio.length, pos + 1024)
+            for (let i = pos; i < end; i++) {
+              const abs = Math.abs(track.audio[i])
+              if (abs > peak) peak = abs
+            }
+            peak *= track.volume
+          }
+          return peak
+        })
+      }
+    } else {
+      this.trackPeaks = [0, 0, 0, 0]
     }
     return this.position
   }

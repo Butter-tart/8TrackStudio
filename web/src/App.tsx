@@ -78,6 +78,7 @@ function App() {
   const [notice, setNotice] = useState('')
   const [peak, setPeak] = useState(0)
   const [inputPeak, setInputPeak] = useState(0)
+  const [trackPeaks, setTrackPeaks] = useState<number[]>([0, 0, 0, 0])
   const [clipped, setClipped] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [device, setDevice] = useState('')
@@ -147,15 +148,17 @@ function App() {
     setPosition(Math.round(engine.position))
     setPeak(0)
     setInputPeak(0)
+    setTrackPeaks([0, 0, 0, 0])
   })
 
   useEffect(() => {
     engine.setStopHandler((capture, warning) => stopped(capture, warning))
     const timer = setInterval(() => {
       if (engine.mode !== 'stopped') {
-        setPosition(Math.round(engine.tick()))
+        setPosition(Math.round(engine.tick(songRef.current)))
         setPeak(engine.peak)
         setInputPeak(engine.inputPeak)
+        setTrackPeaks([...engine.trackPeaks])
         setClipped(engine.clipped)
       }
     }, 60)
@@ -295,7 +298,7 @@ function App() {
       <div className="tracks">{song.tracks.slice(0, TRIAL_TRACKS).map((track, index) => <section className={`track-row ${armed === index ? 'armed' : ''}`} key={index} style={{ '--track-color': colors[index] } as React.CSSProperties} aria-label={`Track ${index + 1}`}>
         <div className="track-controls"><div className="track-label"><span className="track-number">{String(index + 1).padStart(2, '0')}</span><input aria-label={`Track ${index + 1} name`} value={track.name} maxLength={64} disabled={locked} onChange={event => updateTrack(index, { name: event.target.value })} /></div><div className="track-switches"><Tool icon={Circle} label={`Arm track ${index + 1}`} active={armed === index} aria-pressed={armed === index} disabled={locked} onClick={() => setArmed(armed === index ? null : index)} /><button aria-label={`Mute track ${index + 1}`} title="Mute" aria-pressed={track.muted} className={track.muted ? 'muted' : ''} disabled={Boolean(busy)} onClick={() => updateTrack(index, { muted: !track.muted })}>M</button><button aria-label={`Solo track ${index + 1}`} title="Solo" aria-pressed={track.solo} className={track.solo ? 'solo' : ''} disabled={Boolean(busy)} onClick={() => updateTrack(index, { solo: !track.solo })}>S</button><Tool icon={Upload} label={`Import WAV to track ${index + 1}`} disabled={locked} onClick={() => { importTarget.current = index; audioInput.current?.click() }} /><Tool icon={Trash2} label={`Erase track ${index + 1}`} disabled={locked || !track.audio.length} onClick={() => { if (window.confirm(`Erase audio from ${track.name}?`)) commit(replaceAudio(song, index, new Float32Array(0)), true) }} /></div></div>
         <button className={`wave-lane ${track.muted ? 'wave-muted' : ''}`} aria-label={`Seek in track ${index + 1}`} disabled={locked} onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setPosition(Math.round(Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)) * duration)) }}><Waveform audio={track.audio} duration={duration} color={colors[index]} />{!track.audio.length && <span className="empty-lane">{armed === index ? 'INPUT ARMED' : 'EMPTY'}</span>}<span className="playhead" style={{ left: `${position / duration * 100}%` }} />{mode === 'recording' && armed === index && <span className="recording-label">RECORDING</span>}</button>
-        <div className="channel-mix"><label><span>LEVEL <output>{Math.round(track.volume * 100)}</output></span><input aria-label={`Track ${index + 1} level`} type="range" min="0" max="1" step="0.01" value={track.volume} disabled={Boolean(busy)} onChange={event => updateTrack(index, { volume: Number(event.target.value) })} /></label><label className="pan"><span>L</span><input aria-label={`Track ${index + 1} pan`} type="range" min="-1" max="1" step="0.01" value={track.pan} disabled={Boolean(busy)} onChange={event => updateTrack(index, { pan: Number(event.target.value) })} /><span>R</span></label></div>
+        <div className="channel-mix"><label><span>LEVEL <output>{Math.round(track.volume * 100)}</output></span><input aria-label={`Track ${index + 1} level`} type="range" min="0" max="1" step="0.01" value={track.volume} disabled={Boolean(busy)} onChange={event => updateTrack(index, { volume: Number(event.target.value) })} /><meter aria-label={`Track ${index + 1} level preview`} min="0" max="1" value={trackPeaks[index] || 0} /></label><label className="pan"><span>L</span><input aria-label={`Track ${index + 1} pan`} type="range" min="-1" max="1" step="0.01" value={track.pan} disabled={Boolean(busy)} onChange={event => updateTrack(index, { pan: Number(event.target.value) })} /><span>R</span></label></div>
       </section>)}</div>
       <div className="position-strip"><label htmlFor="position">POSITION</label><input id="position" type="range" min="0" max={duration} step="1" value={position} disabled={locked} onChange={event => setPosition(Number(event.target.value))} /><output>{formatTime(songLength(song) / SAMPLE_RATE)} TOTAL</output></div>
     </div></main>

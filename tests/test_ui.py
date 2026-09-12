@@ -63,10 +63,15 @@ class InterfaceTests(unittest.TestCase):
 
     def test_only_one_track_can_be_armed(self):
         self.window.strips[0].arm.setChecked(True)
+        self.assertEqual(self.window.engine.monitor_track, 0)
         self.window.strips[3].arm.setChecked(True)
         self.assertEqual(self.window.armed, 3)
+        self.assertEqual(self.window.engine.monitor_track, 3)
         self.assertFalse(self.window.strips[0].arm.isChecked())
         self.assertTrue(self.window.record_button.isEnabled())
+        self.window.strips[3].arm.setChecked(False)
+        self.assertIsNone(self.window.armed)
+        self.assertIsNone(self.window.engine.monitor_track)
 
     def test_stereo_conversion_waveforms_and_undo_include_takes(self):
         track = self.window.song.tracks[0]
@@ -793,6 +798,17 @@ class InterfaceTests(unittest.TestCase):
         finally:
             reopened.close()
             reopened.deleteLater()
+
+    def test_channel_strip_fader_level_meters(self):
+        for strip in self.window.strips:
+            self.assertTrue(hasattr(strip, "level_meter"))
+            self.assertEqual(strip.level_meter.level, 0.0)
+        self.window.strips[0].level_meter.setValue(0.5)
+        self.assertAlmostEqual(self.window.strips[0].level_meter.level, 0.5)
+        self.window.engine.mode = "playing"
+        self.window.engine.track_peaks = [0.0, 0.7] + [0.0] * 6
+        self.window.tick()
+        self.assertAlmostEqual(self.window.strips[1].level_meter.level, 0.7)
 
     def test_declining_plugin_trust_never_loads_native_code(self):
         self.window.song.tracks[0].effects.append(Effect("vst3", "Example", path="/tmp/example.vst3"))

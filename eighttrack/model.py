@@ -342,9 +342,10 @@ class Song:
                                    for name, audio in {"dry": track.playback_audio, **track._send_audio}.items()}
                     track._tape_audio, track._tape_key = buffers, speed_key
 
-    def mix(self, start: int, frames: int, exclude: int | None = None, *, tape: bool = False) -> np.ndarray:
-        """Mix with live volume, equal-power mono pan and unity-center stereo balance."""
+    def mix_with_peaks(self, start: int, frames: int, exclude: int | None = None, *, tape: bool = False) -> tuple[np.ndarray, list[float]]:
+        """Mix with live volume, equal-power mono pan and unity-center stereo balance, returning mix and track peak levels."""
         output = np.zeros((frames, 2), dtype=np.float32)
+        track_peaks = [0.0] * len(self.tracks)
         has_solo = any(track.solo for track in self.tracks)
         for index, track in enumerate(self.tracks):
             if index == exclude or track.muted or (has_solo and not track.solo):
@@ -357,7 +358,9 @@ class Song:
                 right_gain = math.cos(min(0, track.pan) * math.pi / 2)
             if count > 0:
                 source = track._tape_audio["dry"] if tape and self.tape_speed > 1 else track.playback_audio
-                samples = source[start:start + count] * track.volume * self.master
+                track_samples = source[start:start + count] * track.volume
+                track_peaks[index] = float(np.max(np.abs(track_samples))) if len(track_samples) > 0 else 0.0
+                samples = track_samples * self.master
                 output[:count, 0] += (samples if samples.ndim == 1 else samples[:, 0]) * left_gain
                 output[:count, 1] += (samples if samples.ndim == 1 else samples[:, 1]) * right_gain
             for kind, level in (("reverb", track.reverb_send), ("delay", track.delay_send)):
@@ -369,18 +372,26 @@ class Song:
                 wet = source[start:start + frames]
                 output[:len(wet), 0] += wet[:, 0] * level * track.volume * self.master * left_gain
                 output[:len(wet), 1] += wet[:, 1] * level * track.volume * self.master * right_gain
-        return output
+        return output, track_peaks
 
-    def mix_tape(self, start: float, frames: int) -> np.ndarray:
+    def mix(self, start: int, frames: int, exclude: int | None = None, *, tape: bool = False) -> np.ndarray:
+        """Mix with live volume, equal-power mono pan and unity-center stereo balance."""
+        return self.mix_with_peaks(start, frames, exclude=exclude, tape=tape)[0]
+
+    def mix_tape_with_peaks(self, start: float, frames: int, exclude: int | None = None) -> tuple[np.ndarray, list[float]]:
         if self.tape_speed == 1 and start == int(start):
-            return self.mix(int(start), frames)
+            return self.mix_with_peaks(int(start), frames, exclude=exclude)
         positions = start + np.arange(frames) * self.tape_speed
         first = int(start)
         count = math.ceil(frames * self.tape_speed) + 2
-        source = self.mix(first, count, tape=True)
+        source, track_peaks = self.mix_with_peaks(first, count, exclude=exclude, tape=True)
         coordinates = np.arange(count)
-        return np.column_stack([np.interp(positions - first, coordinates, source[:, channel])
-                                for channel in range(2)]).astype(np.float32)
+        mix = np.column_stack([np.interp(positions - first, coordinates, source[:, channel])
+                               for channel in range(2)]).astype(np.float32)
+        return mix, track_peaks
+
+    def mix_tape(self, start: float, frames: int, exclude: int | None = None) -> np.ndarray:
+        return self.mix_tape_with_peaks(start, frames, exclude=exclude)[0]
 
 
 def import_audio(path: str | Path, *, channels: int = 1) -> np.ndarray:

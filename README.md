@@ -91,9 +91,8 @@ not provided by PortAudio, so channel numbers follow your interface's routing.
 The selected input/output combination is checked at the project's fixed
 44.1 kHz rate before applying. Prefer the same interface and backend for both
 directions. Device and channel choices last for the current app session.
-Use the interface's direct monitoring to hear your live input; software input
-monitoring is not available. Recalibrate the recording offset after changing
-devices or channels.
+Input monitoring is active whenever a track is REC ARMed. Recalibrate the
+recording offset after changing devices or channels.
 
 On Linux, the interface must be visible to the OS audio system/PortAudio.
 If it is missing, connect it before launching the app, check its profile in
@@ -438,7 +437,7 @@ and listen to the WAV in another player. Check timing alignment as well as sound
 - Eight mono tracks, one recording input at a time, fixed 44.1 kHz, maximum ten minutes per song. Output must support two channels.
 - Audio is held in RAM, not streamed from disk. Eight full ten-minute tracks use about 847 MB of raw audio, plus recording, undo, and file-operation buffers. Effects add stereo caches (roughly 213 MB per ten-minute effected track), plugin memory, and temporary render buffers. Start with short songs.
 - Latency compensation uses a fixed measured/manual offset, not continuous device-clock tracking. Test timing on your hardware before important overdubs.
-- No software microphone monitoring. Use headphones and your interface's direct-monitor feature to hear your live input without feedback or software delay.
+- Input monitoring runs on armed tracks. Use headphones to prevent microphone feedback loops while monitoring live input.
 - No MIDI, clip dragging, comping lanes, pitch-preserving time stretching, or automation. Eight tracks remain the working surface.
 - Import, manual project open/save, and dry bounce sums can still pause the UI for large songs. Effects, mixdown, effected bounces and recovery saves use the worker. File operations and effect edits require a stopped transport.
 - Audio, alternate takes, send returns, speed filters and undo snapshots consume RAM. Each full-length alternate adds roughly 106 MB; enabled sends and fast-speed filtering add further caches. Keep projects short on low-memory machines.

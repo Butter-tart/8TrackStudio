@@ -69,7 +69,8 @@ class EngineTests(unittest.TestCase):
         self.engine._record_callback(incoming, output, count + 3, None, None)
         np.testing.assert_array_equal(output[:, :4], 0)
         self.assertTrue(output[:count, 4:].any())
-        np.testing.assert_allclose(output[count:, 4:], self.song.mix(0, 3, exclude=0))
+        expected_mix = self.song.mix(0, 3, exclude=0) + self.engine._render_monitor(self.song.tracks[0], incoming[count:, 3])
+        np.testing.assert_allclose(output[count:, 4:], expected_mix)
         self.engine.stop()
         np.testing.assert_allclose(self.song.tracks[0].audio, [0.4] * 3)
 
@@ -86,7 +87,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(playrec.call_args.kwargs["output_mapping"], [5, 6])
 
     @patch("eighttrack.engine.sd.Stream", FakeStream)
-    def test_stereo_recording_routes_consecutive_inputs_without_monitoring(self):
+    def test_stereo_recording_routes_consecutive_inputs_with_monitoring(self):
         self.song.tracks[0].convert_channels(2)
         self.engine.input_channel = 1
         self.engine.output_channel = 2
@@ -95,7 +96,9 @@ class EngineTests(unittest.TestCase):
         incoming = np.tile([0.9, 0.2, -0.4], (8, 1)).astype(np.float32)
         output = np.ones((8, 4), dtype=np.float32)
         self.engine._record_callback(incoming, output, 8, None, None)
-        np.testing.assert_array_equal(output, 0)
+        np.testing.assert_array_equal(output[:, :2], 0)
+        expected_mon = self.engine._render_monitor(self.song.tracks[0], incoming[:, 1:3])
+        np.testing.assert_allclose(output[:, 2:], expected_mon)
         undo = self.engine.stop()
         np.testing.assert_array_equal(self.song.tracks[0].audio, incoming[:, 1:3])
         self.assertEqual(undo[1].shape, (0, 2))
@@ -118,7 +121,8 @@ class EngineTests(unittest.TestCase):
         expected = original.copy()
         expected[3:7] = incoming[5:9]
         np.testing.assert_array_equal(track.audio, expected)
-        np.testing.assert_array_equal(output[3:7], 0)
+        expected_mon = self.engine._render_monitor(track, incoming[3:7])
+        np.testing.assert_allclose(output[3:7], expected_mon)
 
     @patch("eighttrack.engine.sd.OutputStream", FakeStream)
     def test_varispeed_playback_matches_model_across_callbacks(self):
@@ -169,7 +173,8 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(sd.CallbackStop):
             self.engine._record_callback(incoming, output, 12, None, None)
         np.testing.assert_allclose(output[:3], before[:3])
-        np.testing.assert_allclose(output[3:7], 0)
+        expected_mon = self.engine._render_monitor(self.song.tracks[0], incoming[3:7, 0])
+        np.testing.assert_allclose(output[3:7], expected_mon)
         np.testing.assert_allclose(output[7:9], before[7:9])
         self.engine.stop()
         np.testing.assert_allclose(self.song.tracks[0].audio, [0.1] * 3 + [0.25, 0.3, 0.35, 0.4] + [0.1] * 5)
@@ -201,7 +206,8 @@ class EngineTests(unittest.TestCase):
         self.engine.start(record_track=0)
         output = np.zeros((4, 2), dtype=np.float32)
         self.engine._record_callback(np.full((4, 1), 0.5), output, 4, None, None)
-        np.testing.assert_allclose(output, self.song.mix(3, 4, exclude=0))
+        expected = self.song.mix(3, 4, exclude=0) + self.engine._render_monitor(self.song.tracks[0], np.full(4, 0.5))
+        np.testing.assert_allclose(output, expected)
         np.testing.assert_allclose(self.song.tracks[0].audio, 0.1)
         undo = self.engine.stop()
         np.testing.assert_allclose(self.song.tracks[0].audio, [0.1] * 3 + [0.5] * 4 + [0.1] * 3)
@@ -250,6 +256,70 @@ class EngineTests(unittest.TestCase):
         self.engine.metronome = True
         self.assertTrue(self.engine._render(512).any())
         self.assertEqual(self.song.length, 0)
+
+    @patch("eighttrack.engine.sd.Stream", FakeStream)
+    def test_idle_monitoring_when_armed_and_stopped(self):
+        self.engine.monitor_track = 0
+        self.assertTrue(self.engine.stream.active)
+        incoming = np.full((16, 1), 0.5, dtype=np.float32)
+        output = np.zeros((16, 2), dtype=np.float32)
+        self.engine._monitor_callback(incoming, output, 16, None, None)
+        expected = self.engine._render_monitor(self.song.tracks[0], incoming[:, 0])
+        np.testing.assert_allclose(output, expected)
+        self.assertAlmostEqual(self.engine.input_peak, 0.5)
+        self.engine.monitor_track = None
+        self.assertFalse(self.engine.stream.active if self.engine.stream else False)
+        self.assertEqual(self.engine.input_peak, 0.0)
+
+    @patch("eighttrack.engine.sd.Stream", FakeStream)
+    def test_playback_monitoring_when_armed(self):
+        self.song.tracks[0].write(0, np.full(10, 0.1))
+        self.song.tracks[1].write(0, np.full(10, 0.2))
+        self.engine.monitor_track = 0
+        self.engine.start()
+        incoming = np.full((5, 1), 0.6, dtype=np.float32)
+        output = np.zeros((5, 2), dtype=np.float32)
+        self.engine._play_monitor_callback(incoming, output, 5, None, None)
+        expected = self.song.mix(0, 5, exclude=0) + self.engine._render_monitor(self.song.tracks[0], incoming[:, 0])
+        np.testing.assert_allclose(output, expected)
+        self.engine.stop()
+
+    def test_monitoring_respects_mute_and_solo(self):
+        track = self.song.tracks[0]
+        samples = np.full(10, 0.5, dtype=np.float32)
+        normal = self.engine._render_monitor(track, samples)
+        self.assertTrue(normal.any())
+        track.muted = True
+        muted = self.engine._render_monitor(track, samples)
+        np.testing.assert_array_equal(muted, 0)
+        track.muted = False
+        self.song.tracks[1].solo = True
+        solo_other = self.engine._render_monitor(track, samples)
+        np.testing.assert_array_equal(solo_other, 0)
+        track.solo = True
+        solo_both = self.engine._render_monitor(track, samples)
+        np.testing.assert_allclose(solo_both, normal)
+
+    @patch("eighttrack.engine.sd.OutputStream", FakeStream)
+    @patch("eighttrack.engine.sd.Stream", FakeStream)
+    def test_track_peaks_fader_previews_during_playback_and_recording(self):
+        self.song.tracks[1].write(0, np.full(10, 0.8))
+        self.engine.start()
+        output = np.zeros((5, 2), dtype=np.float32)
+        self.engine._play_callback(output, 5, None, None)
+        self.assertAlmostEqual(self.engine.track_peaks[1], 0.8 * self.song.tracks[1].volume)
+        self.assertEqual(self.engine.track_peaks[0], 0.0)
+        self.engine.stop()
+        self.assertEqual(self.engine.track_peaks, [0.0] * len(self.song.tracks))
+
+        self.engine.start(record_track=0)
+        rec_output = np.zeros((5, 2), dtype=np.float32)
+        incoming = np.full((5, 1), 0.6, dtype=np.float32)
+        self.engine._record_callback(incoming, rec_output, 5, None, None)
+        self.assertAlmostEqual(self.engine.track_peaks[0], 0.6)
+        self.assertAlmostEqual(self.engine.track_peaks[1], 0.8 * self.song.tracks[1].volume)
+        self.engine.stop()
+        self.assertEqual(self.engine.track_peaks, [0.0] * len(self.song.tracks))
 
 
 if __name__ == "__main__":

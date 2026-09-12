@@ -18,11 +18,15 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\8t.exe
 
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\8T"; Filename: "{app}\8t.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\8T"; Filename: "{app}\8t.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\8t.exe"; Description: "Launch 8T"; Flags: nowait postinstall skipifsilent

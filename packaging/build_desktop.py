@@ -19,6 +19,20 @@ def run(arguments: list[str], **options) -> None:
     subprocess.run(arguments, cwd=ROOT, check=True, **options)
 
 
+def find_iscc() -> str:
+    candidates = [
+        shutil.which("ISCC"),
+        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe"),
+        str(Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe"),
+        str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Inno Setup 6" / "ISCC.exe"),
+        str(Path(os.environ.get("USERPROFILE", "")) / "AppData" / "Local" / "Programs" / "Inno Setup 6" / "ISCC.exe"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError("Inno Setup 6 (ISCC.exe) not found. Please install Inno Setup 6 or add it to PATH.")
+
+
 def build(skip_build: bool) -> Path:
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     operating_system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)
@@ -43,7 +57,7 @@ def build(skip_build: bool) -> Path:
     if not report.is_file() or json.loads(report.read_text(encoding="utf-8")).get("status") != "passed":
         raise RuntimeError("The frozen application did not pass its smoke test.")
     if operating_system == "windows":
-        compiler = shutil.which("ISCC") or str(Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe")
+        compiler = find_iscc()
         run([compiler, f"/DAppVersion={version}", f"/DSourceDir={distribution / '8t'}",
              f"/DReleaseDir={releases}", f"/DReleaseName={stem}", "packaging/windows.iss"])
         artifact = releases / f"{stem}.exe"

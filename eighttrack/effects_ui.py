@@ -55,7 +55,7 @@ class EffectsPanel(QWidget):
         self.effect_list.setWrapping(False)
         self.effect_list.setFixedHeight(62)
         self.effect_list.setHorizontalScrollMode(QListView.ScrollMode.ScrollPerPixel)
-        self.effect_list.setStyleSheet("QListWidget { background: #f9faf8; border: 1px solid #bbc3bc; } QListWidget::item { padding: 9px; } QListWidget::item:selected { background: #426d59; color: white; }")
+        self.effect_list.setStyleSheet("QListWidget::item { padding: 9px; }")
         self.effect_list.setAccessibleName("Effect chain, first to last")
         self.effect_list.currentRowChanged.connect(self.show_parameters)
         rack.addWidget(self.effect_list, 1)

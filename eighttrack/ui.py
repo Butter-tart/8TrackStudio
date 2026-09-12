@@ -9,48 +9,29 @@ from uuid import uuid4
 
 import numpy as np
 import sounddevice as sd
-from PySide6.QtCore import Qt, QSettings, QStandardPaths, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtCore import Qt, QRect, QSettings, QStandardPaths, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
+    QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
-    QSlider, QSpinBox, QStackedWidget, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+    QSlider, QSpinBox, QStackedWidget, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
+from eighttrack import __version__
 from eighttrack.engine import AudioEngine, BLOCK_SIZE
 from eighttrack.model import (
     BounceRecord, MAX_FRAMES, SAMPLE_RATE, Song, Take, Track, export_lyrics, export_mix, export_stems, import_audio, load_song, save_song,
 )
+from eighttrack.theme import (
+    ACCENT_PRESETS, DEFAULT_TRACK_COLORS, THEME_PRESETS, ThemePalette, build_stylesheet, get_theme_palette,
+)
+from eighttrack.updates import DEFAULT_CLONE_URL, DEFAULT_REPO, DEFAULT_REPO_URL, UpdateInfo, check_for_updates
 
 
-COLORS = ["#168777", "#3676b2", "#b27b17", "#ac556b", "#598137", "#5577a0", "#a55e35", "#6c7280"]
-STYLE = """
-QMainWindow, QDialog { background: #e8eae7; color: #232927; }
-QWidget { font-family: 'DejaVu Sans'; font-size: 12px; }
-QLabel { color: #26322c; }
-QToolButton, QPushButton { background: #f9faf8; border: 1px solid #b4bdb6; border-radius: 4px; padding: 7px; }
-QToolButton:hover, QPushButton:hover { background: #d6e7dd; border-color: #55846c; }
-QToolButton:disabled, QPushButton:disabled { color: #969e98; background: #e1e4df; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #f9faf8; color: #232927; border: 1px solid #bbc3bc; border-radius: 3px; padding: 5px; }
-QLineEdit:focus { border-color: #168777; }
-QSlider::groove:vertical { width: 5px; background: #bbc3bc; border-radius: 2px; }
-QSlider::handle:vertical { height: 23px; margin: 0 -11px; background: #fdfefb; border: 1px solid #708075; border-radius: 3px; }
-QSlider::groove:horizontal { height: 4px; background: #b8c1ba; }
-QSlider::handle:horizontal { width: 12px; margin: -5px 0; background: #426d59; border-radius: 3px; }
-QProgressBar { background: #cdd4cd; border: none; border-radius: 2px; }
-QProgressBar::chunk { background: #168777; }
-QCheckBox { spacing: 5px; color: #26322c; }
-QCheckBox::indicator { width: 14px; height: 14px; }
-QMenuBar, QMenu { background: #f4f5f1; color: #232927; }
-QStatusBar { background: #d5dcd5; color: #36473c; }
-QDockWidget { color: #232927; }
-QDockWidget::title { background: #d5dcd5; padding: 5px; }
-QMainWindow::separator { background: #b4bdb6; height: 5px; width: 5px; }
-QMainWindow::separator:hover { background: #168777; }
-QToolTip { background: #f9faf8; color: #232927; border: 1px solid #899c8d; }
-"""
+COLORS = list(DEFAULT_TRACK_COLORS)
+STYLE = build_stylesheet("light", "#168777")
 
 
 def timecode(frames: int) -> str:
@@ -73,6 +54,209 @@ def tool_button(parent: QWidget, icon: QStyle.StandardPixmap, tooltip: str) -> Q
     button.setAccessibleName(tooltip)
     button.setFixedSize(40, 36)
     return button
+
+
+class UpdateWorker(QThread):
+    result_ready = Signal(object)
+
+    def __init__(self, current_version: str = __version__, repo: str = DEFAULT_REPO, parent=None):
+        super().__init__(parent)
+        self.current_version = current_version
+        self.repo = repo
+
+    def run(self):
+        info = check_for_updates(self.current_version, self.repo)
+        self.result_ready.emit(info)
+
+
+class UpdateDialog(QDialog):
+    def __init__(self, info: UpdateInfo, parent=None):
+        super().__init__(parent)
+        self.info = info
+        self.setWindowTitle("8T Update Check")
+        self.resize(520, 380)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        if info.error:
+            header = QLabel("Unable to check for updates")
+            header.setStyleSheet("font-size: 16px; font-weight: bold; color: #c7434e;")
+            layout.addWidget(header)
+
+            msg = QLabel(f"{info.error}\n\nPlease check your internet connection or visit the GitHub repository directly.")
+            msg.setWordWrap(True)
+            layout.addWidget(msg)
+        elif info.has_update:
+            header = QLabel(f"A new version of 8T is available: v{info.latest_version}")
+            header.setStyleSheet("font-size: 16px; font-weight: bold; color: #2e7d32;")
+            layout.addWidget(header)
+
+            details = f"Installed version: v{info.current_version}\nLatest version: v{info.latest_version}"
+            if info.release_name and info.release_name != f"v{info.latest_version}":
+                details += f" ({info.release_name})"
+            if info.published_at:
+                details += f" — Released: {info.published_at}"
+            details_lbl = QLabel(details)
+            details_lbl.setWordWrap(True)
+            layout.addWidget(details_lbl)
+
+            if info.release_notes:
+                notes_title = QLabel("Release Notes:")
+                notes_title.setStyleSheet("font-weight: bold;")
+                layout.addWidget(notes_title)
+                notes_box = QTextEdit()
+                notes_box.setReadOnly(True)
+                notes_box.setPlainText(info.release_notes)
+                layout.addWidget(notes_box, 1)
+        else:
+            header = QLabel(f"You are up to date! (v{info.current_version})")
+            header.setStyleSheet("font-size: 16px; font-weight: bold;")
+            layout.addWidget(header)
+
+            msg = QLabel(f"8T v{info.current_version} is currently the newest version.")
+            layout.addWidget(msg)
+
+        repo_link = QLabel(f"GitHub: <a href='{DEFAULT_CLONE_URL}'>{DEFAULT_CLONE_URL}</a>")
+        repo_link.setOpenExternalLinks(True)
+        layout.addWidget(repo_link)
+
+        buttons = QDialogButtonBox()
+        self.open_button = QPushButton("Open in Browser")
+        self.open_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self.open_button.clicked.connect(self.open_browser)
+        buttons.addButton(self.open_button, QDialogButtonBox.ButtonRole.ActionRole)
+
+        self.close_button = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        self.close_button.clicked.connect(self.accept)
+        layout.addWidget(buttons)
+
+    def open_browser(self):
+        target_url = self.info.html_url or DEFAULT_REPO_URL
+        QDesktopServices.openUrl(QUrl(target_url))
+
+
+class ThemeDialog(QDialog):
+    def __init__(self, window: "StudioWindow"):
+        super().__init__(window)
+        self.window = window
+        self.setWindowTitle("Theme and Colour Accents")
+        self.resize(520, 480)
+        self.selected_theme = window.current_theme
+        self.selected_accent = window.current_accent
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+
+        theme_group = QGroupBox("Base Theme")
+        theme_layout = QVBoxLayout(theme_group)
+        self.theme_radios = {}
+        for key, name in THEME_PRESETS:
+            radio = QRadioButton(name)
+            if key == self.selected_theme:
+                radio.setChecked(True)
+            radio.toggled.connect(lambda checked, k=key: self.on_theme_changed(k, checked))
+            theme_layout.addWidget(radio)
+            self.theme_radios[key] = radio
+        layout.addWidget(theme_group)
+
+        accent_group = QGroupBox("Colour Accent")
+        accent_layout = QVBoxLayout(accent_group)
+        grid = QGridLayout()
+        self.accent_buttons = []
+        for index, (key, name, hex_val) in enumerate(ACCENT_PRESETS):
+            btn = QPushButton(name)
+            text_color = "#ffffff" if key not in ("amber",) else "#1a1a1a"
+            btn.setStyleSheet(f"QPushButton {{ background-color: {hex_val}; color: {text_color}; font-weight: bold; border-radius: 4px; padding: 7px; }}")
+            btn.clicked.connect(lambda checked=False, h=hex_val: self.on_accent_preset(h))
+            row, col = divmod(index, 2)
+            grid.addWidget(btn, row, col)
+            self.accent_buttons.append(btn)
+        accent_layout.addLayout(grid)
+
+        custom_row = QHBoxLayout()
+        self.custom_preview = QLabel("   ")
+        self.custom_preview.setFixedSize(30, 24)
+        self.update_custom_preview(self.selected_accent)
+        custom_row.addWidget(QLabel("Current Accent:"))
+        custom_row.addWidget(self.custom_preview)
+
+        self.custom_btn = QPushButton("Choose Custom Colour...")
+        self.custom_btn.clicked.connect(self.choose_custom_color)
+        custom_row.addWidget(self.custom_btn)
+        custom_row.addStretch()
+        accent_layout.addLayout(custom_row)
+        layout.addWidget(accent_group)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply_live)
+        layout.addWidget(buttons)
+
+    def update_custom_preview(self, hex_val: str):
+        self.custom_preview.setStyleSheet(f"background-color: {hex_val}; border: 1px solid #777; border-radius: 3px;")
+
+    def on_theme_changed(self, key: str, checked: bool):
+        if checked:
+            self.selected_theme = key
+            self.apply_live()
+
+    def on_accent_preset(self, hex_val: str):
+        self.selected_accent = hex_val
+        self.update_custom_preview(hex_val)
+        self.apply_live()
+
+    def choose_custom_color(self):
+        color = QColorDialog.getColor(QColor(self.selected_accent), self, "Select Accent Colour")
+        if color.isValid():
+            self.selected_accent = color.name()
+            self.update_custom_preview(self.selected_accent)
+            self.apply_live()
+
+    def apply_live(self):
+        self.window.apply_theme(self.selected_theme, self.selected_accent, save=True)
+
+    def accept(self):
+        self.apply_live()
+        super().accept()
+
+
+class AboutDialog(QDialog):
+    def __init__(self, window: "StudioWindow"):
+        super().__init__(window)
+        self.window = window
+        self.setWindowTitle("About 8T: 8 Track DAW")
+        self.resize(460, 290)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QLabel("8T: 8 Track DAW")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        layout.addWidget(title)
+
+        version = QLabel(f"Version {__version__}")
+        version.setStyleSheet("font-weight: bold;")
+        layout.addWidget(version)
+
+        desc = QLabel(
+            "A beginner-friendly eight-track desktop DAW for making songs one track at a time, "
+            "inspired by classic cassette multi-track recorders."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        repo_link = QLabel(f"GitHub: <a href='{DEFAULT_CLONE_URL}'>{DEFAULT_CLONE_URL}</a>")
+        repo_link.setOpenExternalLinks(True)
+        layout.addWidget(repo_link)
+
+        buttons = QDialogButtonBox()
+        check_btn = QPushButton("Check for Updates...")
+        check_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        check_btn.clicked.connect(lambda: (self.accept(), window.check_for_updates_ui(interactive=True)))
+        buttons.addButton(check_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        close_btn = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(buttons)
 
 
 class AudioDevicesDialog(QDialog):
@@ -215,11 +399,16 @@ class RenderJob(QThread):
 
 
 class LevelMeter(QWidget):
-    def __init__(self):
+    def __init__(self, palette: ThemePalette | None = None):
         super().__init__()
         self.level = 0.0
+        self.palette = palette or get_theme_palette()
         self.setFixedSize(78, 34)
         self.setToolTip("Peak level in dBFS")
+
+    def set_palette(self, palette: ThemePalette) -> None:
+        self.palette = palette
+        self.update()
 
     def setValue(self, value):
         self.level = max(value / 100, self.level * 0.75)
@@ -228,27 +417,33 @@ class LevelMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#f1f3e9"))
-        painter.setPen(QPen(QColor("#9ca79d"), 1))
+        p = self.palette
+        painter.fillRect(self.rect(), QColor(p.meter_bg))
+        painter.setPen(QPen(QColor(p.meter_border), 1))
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
         painter.setFont(QFont("DejaVu Sans Mono", 6))
         for horizontal, label in ((5, "-40"), (30, "-12"), (61, "0")):
-            painter.setPen(QColor("#b43f46" if label == "0" else "#47594d"))
+            painter.setPen(QColor(p.meter_clip if label == "0" else p.meter_text))
             painter.drawText(horizontal, 10, label)
             painter.drawLine(horizontal + 5, 12, horizontal + 5, 15)
         decibels = 20 * math.log10(max(self.level, 0.0001))
         horizontal = 8 + min(1, max(0, (decibels + 40) / 40)) * 60
-        painter.setPen(QPen(QColor("#b43f46" if self.level >= 1 else "#26392e"), 2))
+        painter.setPen(QPen(QColor(p.meter_clip if self.level >= 1 else p.meter_normal), 2))
         painter.drawLine(39, 32, round(horizontal), 14)
 
 
 class FaderLevelMeter(QWidget):
-    def __init__(self):
+    def __init__(self, palette: ThemePalette | None = None):
         super().__init__()
         self.level = 0.0
+        self.palette = palette or get_theme_palette()
         self.setFixedWidth(8)
         self.setMinimumHeight(115)
         self.setToolTip("Track peak audio level preview")
+
+    def set_palette(self, palette: ThemePalette) -> None:
+        self.palette = palette
+        self.update()
 
     def setValue(self, value: float):
         level = value / 100 if value > 1 else float(value)
@@ -259,15 +454,16 @@ class FaderLevelMeter(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         rect = self.rect()
-        painter.fillRect(rect, QColor("#f1f3e9"))
-        painter.setPen(QPen(QColor("#9ca79d"), 1))
+        p = self.palette
+        painter.fillRect(rect, QColor(p.meter_bg))
+        painter.setPen(QPen(QColor(p.meter_border), 1))
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
         decibels = 20 * math.log10(max(self.level, 0.0001))
         fraction = min(1.0, max(0.0, (decibels + 40) / 40))
         fill_height = round(fraction * (rect.height() - 2))
         if fill_height > 0:
             fill_rect = QRect(1, rect.height() - 1 - fill_height, rect.width() - 2, fill_height)
-            color = QColor("#b43f46") if self.level >= 1.0 else QColor("#26392e")
+            color = QColor(p.meter_clip) if self.level >= 1.0 else QColor(p.meter_normal)
             painter.fillRect(fill_rect, color)
 
 
@@ -382,9 +578,10 @@ class BounceHistoryDialog(QDialog):
 class Waveform(QWidget):
     seek_requested = Signal(float)
 
-    def __init__(self, color: str):
+    def __init__(self, color: str, palette: ThemePalette | None = None):
         super().__init__()
         self.color = color
+        self.palette = palette or get_theme_palette()
         self.peaks = np.zeros(0)
         self.audio_frames = 0
         self.duration = SAMPLE_RATE * 10
@@ -393,6 +590,14 @@ class Waveform(QWidget):
         self.setMinimumWidth(96)
         self.setToolTip("Click to move the playhead while stopped")
         self.setAccessibleName("Track waveform")
+
+    def set_palette(self, palette: ThemePalette) -> None:
+        self.palette = palette
+        self.update()
+
+    def set_color(self, color: str) -> None:
+        self.color = color
+        self.update()
 
     def set_audio(self, audio: np.ndarray) -> None:
         self.audio_frames = len(audio)
@@ -411,8 +616,9 @@ class Waveform(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#192721"))
-        painter.setPen(QPen(QColor("#334a3d"), 1))
+        p = self.palette
+        painter.fillRect(self.rect(), QColor(p.waveform_bg))
+        painter.setPen(QPen(QColor(p.waveform_grid), 1))
         for division in range(1, 4):
             horizontal = int(self.width() * division / 4)
             painter.drawLine(horizontal, 0, horizontal, self.height())
@@ -421,14 +627,19 @@ class Waveform(QWidget):
         lane_height = self.height() / len(lanes)
         for channel, peaks in enumerate(lanes):
             center = (channel + 0.5) * lane_height
-            painter.setPen(QPen(QColor("#334a3d"), 1))
+            painter.setPen(QPen(QColor(p.waveform_grid), 1))
             painter.drawLine(0, int(center), self.width(), int(center))
-            painter.setPen(QPen(QColor(self.color).lighter(145), 1))
+            wave_pen = QColor(self.color)
+            if p.name in ("dark", "midnight", "slate"):
+                wave_pen = wave_pen.lighter(130)
+            else:
+                wave_pen = wave_pen.lighter(145)
+            painter.setPen(QPen(wave_pen, 1))
             for index, peak in enumerate(peaks):
                 horizontal = int(index / max(1, len(peaks)) * extent)
                 amplitude = min(float(peak), 1) * (lane_height / 2 - 8)
                 painter.drawLine(horizontal, int(center - amplitude), horizontal, int(center + amplitude))
-        painter.setPen(QPen(QColor("#f0d879"), 2))
+        painter.setPen(QPen(QColor(p.waveform_playhead), 2))
         playhead = min(self.width() - 1, int(self.position / max(1, self.duration) * self.width()))
         painter.drawLine(playhead, 0, playhead, self.height())
 
@@ -442,14 +653,15 @@ class ChannelStrip(QWidget):
         super().__init__()
         self.window = window
         self.index = index
+        self.color = COLORS[index % len(COLORS)]
         self.setMinimumWidth(116)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(9, 6, 9, 6)
         layout.setSpacing(6)
-        number = QLabel(f"{index + 1:02d}")
-        number.setStyleSheet(f"color: {COLORS[index]}; font-size: 23px; font-weight: bold; border-bottom: 3px solid {COLORS[index]}; padding-bottom: 6px;")
+        self.number = QLabel(f"{index + 1:02d}")
+        self.number.setStyleSheet(f"color: {self.color}; font-size: 23px; font-weight: bold; border-bottom: 3px solid {self.color}; padding-bottom: 6px;")
         name_heading = QHBoxLayout()
-        name_heading.addWidget(number)
+        name_heading.addWidget(self.number)
         name_label = QLabel("Name")
         name_heading.addWidget(name_label)
         layout.addLayout(name_heading)
@@ -460,7 +672,7 @@ class ChannelStrip(QWidget):
         self.name.setAccessibleName(f"Track {index + 1} name")
         self.name.editingFinished.connect(self.rename)
         layout.addWidget(self.name)
-        self.waveform = Waveform(COLORS[index])
+        self.waveform = Waveform(self.color, getattr(window, "palette", None))
         self.waveform.seek_requested.connect(window.seek_waveform)
         layout.addWidget(self.waveform)
         self.length_label = QLabel("00:00.000")
@@ -505,7 +717,7 @@ class ChannelStrip(QWidget):
         self.volume.setAccessibleName(f"Track {index + 1} volume")
         self.volume.valueChanged.connect(self.set_volume)
         fader_layout.addWidget(self.volume, 1)
-        self.level_meter = FaderLevelMeter()
+        self.level_meter = FaderLevelMeter(getattr(window, "palette", None))
         fader_layout.addWidget(self.level_meter)
         layout.addLayout(fader_layout, 1)
         self.volume_label = QLabel("80%")
@@ -525,6 +737,14 @@ class ChannelStrip(QWidget):
             button.setFixedWidth(28)
         layout.addLayout(commands)
         self.refresh()
+
+    def update_theme(self, palette: ThemePalette, track_color: str | None = None) -> None:
+        if track_color:
+            self.color = track_color
+            self.number.setStyleSheet(f"color: {self.color}; font-size: 23px; font-weight: bold; border-bottom: 3px solid {self.color}; padding-bottom: 6px;")
+            self.waveform.set_color(self.color)
+        self.waveform.set_palette(palette)
+        self.level_meter.set_palette(palette)
 
     @property
     def track(self) -> Track:
@@ -604,13 +824,16 @@ class StudioWindow(QMainWindow):
             legacy_settings = QSettings("Portastudio", "Portastudio08")
             self.settings.setValue("recording_offset", legacy_settings.value("recording_offset", 0, type=int))
         self.engine.recording_offset = max(0, min(SAMPLE_RATE * 2, self.settings.value("recording_offset", 0, type=int)))
+        self.current_theme = self.settings.value("theme/base", "light", type=str)
+        self.current_accent = self.settings.value("theme/accent", "#168777", type=str)
+        self.palette = get_theme_palette(self.current_theme, self.current_accent)
+
         recovery_root = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "recovery"
         self.recovery_path = recovery_root / f"{os.getpid()}-{uuid4().hex}.8t"
         self.recovered_path = None
         self.duration = SAMPLE_RATE * 10
         self.resize(1200, 800)
         self.setMinimumSize(680, 650)
-        self.setStyleSheet(STYLE)
         self._build_menu()
         central = QWidget()
         self.setCentralWidget(central)
@@ -649,7 +872,6 @@ class StudioWindow(QMainWindow):
         self.clock.setFont(QFont("DejaVu Sans Mono", 23))
         self.clock.setFixedWidth(205)
         self.clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.clock.setStyleSheet("background: #192721; color: #d1edb6; padding: 7px; border-radius: 3px; font-family: 'DejaVu Sans Mono'; font-size: 23px;")
         transport.addWidget(self.clock)
         self.state_label = QLabel("STOPPED")
         self.state_label.setFixedWidth(90)
@@ -716,7 +938,6 @@ class StudioWindow(QMainWindow):
         self.workspace_tabs.addWidget(scroll)
         self.lyrics_editor = QPlainTextEdit()
         self.lyrics_editor.setAccessibleName("Songwriting: lyrics, chords and notes")
-        self.lyrics_editor.setStyleSheet("QPlainTextEdit { background: #f9faf8; color: #232927; border: none; padding: 12px; font-family: 'DejaVu Sans Mono'; font-size: 14px; }")
         self.lyrics_editor.textChanged.connect(self.update_lyrics)
         self.workspace_tabs.addWidget(self.lyrics_editor)
         self.view_tabs.currentChanged.connect(self.workspace_tabs.setCurrentIndex)
@@ -754,6 +975,7 @@ class StudioWindow(QMainWindow):
         bottom.addWidget(self.clip_label)
         layout.addLayout(bottom)
         self._build_docks()
+        self.apply_theme(self.current_theme, self.current_accent, save=False)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(50)
@@ -764,8 +986,77 @@ class StudioWindow(QMainWindow):
         self.refresh()
         self.statusBar().showMessage("Ready")
 
+    def apply_theme(self, theme_name: str, accent_color: str, save: bool = True) -> None:
+        self.current_theme = theme_name
+        self.current_accent = accent_color
+        self.palette = get_theme_palette(theme_name, accent_color)
+        stylesheet = build_stylesheet(theme_name, accent_color)
+        self.setStyleSheet(stylesheet)
+        p = self.palette
+        if hasattr(self, "clock"):
+            self.clock.setStyleSheet(
+                f"background: {p.clock_bg}; color: {p.clock_text}; padding: 7px; border-radius: 3px; font-family: 'DejaVu Sans Mono'; font-size: 23px;"
+            )
+        if hasattr(self, "lyrics_editor"):
+            self.lyrics_editor.setStyleSheet(
+                f"QPlainTextEdit {{ background: {p.bg_input}; color: {p.text_main}; border: none; padding: 12px; font-family: 'DejaVu Sans Mono'; font-size: 14px; }}"
+            )
+        if hasattr(self, "input_meter"):
+            self.input_meter.set_palette(p)
+        if hasattr(self, "output_meter"):
+            self.output_meter.set_palette(p)
+        if hasattr(self, "strips"):
+            for strip in self.strips:
+                track_col = p.track_colors[strip.index % len(p.track_colors)]
+                strip.update_theme(p, track_col)
+        if hasattr(self, "theme_actions") and theme_name in self.theme_actions:
+            self.theme_actions[theme_name].setChecked(True)
+        if hasattr(self, "accent_actions"):
+            matched = False
+            for key, name, hex_val in ACCENT_PRESETS:
+                if hex_val.lower() == accent_color.lower() and key in self.accent_actions:
+                    self.accent_actions[key].setChecked(True)
+                    matched = True
+            if not matched and hasattr(self, "accent_action_group"):
+                checked = self.accent_action_group.checkedAction()
+                if checked:
+                    self.accent_action_group.setExclusive(False)
+                    checked.setChecked(False)
+                    self.accent_action_group.setExclusive(True)
+        if save:
+            self.settings.setValue("theme/base", self.current_theme)
+            self.settings.setValue("theme/accent", self.current_accent)
+
+    def choose_custom_accent(self) -> None:
+        color = QColorDialog.getColor(QColor(self.current_accent), self, "Select Accent Colour")
+        if color.isValid():
+            self.apply_theme(self.current_theme, color.name(), save=True)
+
+    def open_theme_dialog(self) -> None:
+        dialog = ThemeDialog(self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def show_about_dialog(self) -> None:
+        dialog = AboutDialog(self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def check_for_updates_ui(self, interactive: bool = True) -> None:
+        self.statusBar().showMessage("Checking for updates from GitHub...")
+        self._update_worker = UpdateWorker(current_version=__version__, repo=DEFAULT_REPO, parent=self)
+        def on_finished(info: UpdateInfo):
+            self.statusBar().showMessage("Update check complete")
+            if interactive:
+                dialog = UpdateDialog(info, parent=self)
+                dialog.exec()
+                dialog.deleteLater()
+            self._update_worker = None
+        self._update_worker.result_ready.connect(on_finished)
+        self._update_worker.start()
+
     def _meter(self) -> LevelMeter:
-        return LevelMeter()
+        return LevelMeter(getattr(self, "palette", None))
 
     def _build_docks(self) -> None:
         from eighttrack.effects_ui import EffectsPanel
@@ -823,6 +1114,7 @@ class StudioWindow(QMainWindow):
             action.triggered.connect(callback)
             file_menu.addAction(action)
             self.stopped_actions.append(action)
+
         edit_menu = self.menuBar().addMenu("Edit")
         self.undo_action = QAction("Undo last audio edit", self)
         self.undo_action.setShortcut("Ctrl+Z")
@@ -832,6 +1124,43 @@ class StudioWindow(QMainWindow):
         self.redo_action.setShortcut("Ctrl+Shift+Z")
         self.redo_action.triggered.connect(self.redo)
         edit_menu.addAction(self.redo_action)
+
+        view_menu = self.menuBar().addMenu("View")
+        theme_menu = view_menu.addMenu("Theme")
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        self.theme_actions = {}
+        for key, name in THEME_PRESETS:
+            act = QAction(name, self, checkable=True)
+            if key == self.current_theme:
+                act.setChecked(True)
+            act.triggered.connect(lambda checked=False, k=key: self.apply_theme(k, self.current_accent))
+            theme_menu.addAction(act)
+            self.theme_action_group.addAction(act)
+            self.theme_actions[key] = act
+
+        accent_menu = view_menu.addMenu("Accent Colour")
+        self.accent_action_group = QActionGroup(self)
+        self.accent_action_group.setExclusive(True)
+        self.accent_actions = {}
+        for key, name, hex_val in ACCENT_PRESETS:
+            act = QAction(name, self, checkable=True)
+            if hex_val.lower() == self.current_accent.lower():
+                act.setChecked(True)
+            act.triggered.connect(lambda checked=False, h=hex_val: self.apply_theme(self.current_theme, h))
+            accent_menu.addAction(act)
+            self.accent_action_group.addAction(act)
+            self.accent_actions[key] = act
+
+        custom_accent_act = QAction("Custom Accent Colour...", self)
+        custom_accent_act.triggered.connect(self.choose_custom_accent)
+        accent_menu.addAction(custom_accent_act)
+
+        view_menu.addSeparator()
+        theme_settings_act = QAction("Theme & Accent Settings...", self)
+        theme_settings_act.triggered.connect(self.open_theme_dialog)
+        view_menu.addAction(theme_settings_act)
+
         tape_menu = self.menuBar().addMenu("Tape")
         for title, shortcut, callback in [
             ("Tape settings and locations...", "", self.tape_settings),
@@ -843,6 +1172,7 @@ class StudioWindow(QMainWindow):
             action.triggered.connect(callback)
             tape_menu.addAction(action)
             self.stopped_actions.append(action)
+
         tracks_menu = self.menuBar().addMenu("Tracks")
         self.bounce_action = QAction("Bounce tracks...", self)
         self.bounce_action.triggered.connect(self.show_bounce)
@@ -851,6 +1181,7 @@ class StudioWindow(QMainWindow):
         self.history_action = QAction("Bounce history...", self)
         self.history_action.triggered.connect(self.show_bounce_history)
         tracks_menu.addAction(self.history_action)
+
         audio_menu = self.menuBar().addMenu("Audio")
         devices = QAction("Audio devices...", self)
         devices.triggered.connect(self.audio_devices)
@@ -860,6 +1191,21 @@ class StudioWindow(QMainWindow):
         calibrate.triggered.connect(self.calibrate_latency)
         audio_menu.addAction(calibrate)
         self.stopped_actions.append(calibrate)
+
+        help_menu = self.menuBar().addMenu("Help")
+        update_action = QAction("Check for updates...", self)
+        update_action.triggered.connect(lambda: self.check_for_updates_ui(interactive=True))
+        help_menu.addAction(update_action)
+
+        repo_action = QAction("GitHub Repository...", self)
+        repo_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(DEFAULT_CLONE_URL)))
+        help_menu.addAction(repo_action)
+
+        help_menu.addSeparator()
+        about_action = QAction("About 8T...", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+
         for shortcut, callback in [("Space", self.toggle_play), ("Home", self.rewind), ("R", self.record)]:
             action = QAction(self)
             action.setShortcut(shortcut)

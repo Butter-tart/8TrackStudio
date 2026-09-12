@@ -254,6 +254,23 @@ Recovery files live in Qt's application-data directory under `recovery` (normall
 that session's snapshots. Recovery does not protect an in-progress recording or
 edits since the last snapshot, and it is not a replacement for backups.
 
+### Themes and Colour Accents
+
+Customize the desktop interface via **View > Theme** and **View > Accent Colour**, or open **View > Theme & Accent Settings...**:
+
+- **Base Themes**: Studio Light (Classic), Studio Dark, Midnight Blue, Retro Tape, and Slate Gray.
+- **Colour Accents**: Preset options include Teal (Default), Ocean Blue, Amber Gold, Ruby Crimson, Purple Violet, Sunset Orange, Sage Green, and Electric Cyan, plus a custom color picker for arbitrary accent hues.
+- Accent colors dynamically tint sliders, focus rings, meter active indicators, track numbers, and UI highlights.
+- Theme and accent selections persist across application sessions.
+
+### Updates and GitHub Repository
+
+Check for latest updates directly from the official GitHub repository:
+
+- Open **Help > Check for updates...** to check [https://github.com/Butter-tart/8TrackStudio.git](https://github.com/Butter-tart/8TrackStudio.git) for new releases or tags. If a newer version is available, release notes and a direct browser link are displayed.
+- Open **Help > GitHub Repository...** to navigate directly to the repository in your browser.
+- Open **Help > About 8T...** to see app details and version information.
+
 ### Keyboard shortcuts
 
 | Key | Action |

@@ -68,7 +68,7 @@ environments and dependency wheels if exact repeatability is required.
 The frozen executable accepts a non-interactive check:
 
 ```sh
-dist/desktop/8t/8t --smoke-test build/smoke.json --project /path/to/browser.8t
+dist/desktop/8t/8t --smoke-test build/smoke.json --project /path/to/song.8t
 ```
 
 Windows uses `dist/desktop/8t/8t.exe`; macOS uses
@@ -78,8 +78,8 @@ built-in effect rendering pass. Settings are isolated from desktop preferences.
 The check enumerates devices but does not record from hardware.
 
 Before distribution, test the installed/extracted artifact on each clean target
-OS: startup, microphone permissions, actual recording/playback, browser project
-import, native save/reopen, recovery, effects and export. Test third-party native
+OS: startup, microphone permissions, actual recording/playback, native save/reopen,
+recovery, effects and export. Test third-party native
 VST3 plugins separately; their binaries are never bundled and compatibility is
 not guaranteed across operating systems or architectures.
 
@@ -98,6 +98,6 @@ corresponding source/build materials, and meet applicable source/relinking
 obligations. This build does not invent an application license. Manifests mark
 redistribution review as required.
 
-After review, upload artifacts/checksums to your host and configure the browser's
-`VITE_DESKTOP_*_URL` values. Host credentials are deployment inputs, never embedded
-in the app. Signing and publication are deliberately not automated yet.
+After review, upload artifacts and checksums to your release host. Host
+credentials are deployment inputs, never embedded in the app. Signing and
+publication are deliberately not automated yet.

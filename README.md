@@ -4,22 +4,15 @@ A Python desktop prototype for making songs one track at a time, like an
 eight-track tape recorder. Audio, song storage, and the interface are separate
 so you can learn or change one part without rewriting the others.
 
-## Browser Trial and Desktop
+## Desktop Application
 
-The [browser trial](web/README.md) offers four mono tracks, a five-minute
-timeline, recording/import, basic mixing, project downloads, and stereo WAV
-export. It has no expiry, account requirement, or payment system. Projects open
-in desktop with four additional empty tracks available.
-
-Desktop keeps its eight tracks, existing ten-minute timeline, effects/VST3,
-alternate takes, tape editing, songwriting, recovery and advanced exports.
-The trial refuses incompatible desktop projects rather than removing their
-tracks or processing. Older browser recovery can still be downloaded for desktop.
+Desktop provides eight tracks, a ten-minute timeline, effects/VST3, alternate
+takes, tape editing, songwriting, recovery and advanced exports.
 
 [Native preview packaging](packaging/README.md) produces Windows installers,
-separate Intel/Apple Silicon macOS disk images, and Linux archives for hosting
-on your website. Initial builds are unsigned previews; platform testing, signing
-and dependency-license review remain release requirements.
+separate Intel/Apple Silicon macOS disk images, and Linux archives. Initial
+builds are unsigned previews; platform testing, signing and dependency-license
+review remain release requirements.
 
 ## Run it
 
@@ -267,7 +260,7 @@ Customize the desktop interface via **View > Theme** and **View > Accent Colour*
 
 Check for latest updates directly from the official GitHub repository:
 
-- Open **Help > Check for updates...** to check [https://github.com/Butter-tart/8TrackStudio.git](https://github.com/Butter-tart/8TrackStudio.git) for new releases or tags. If a newer version is available, release notes and a direct browser link are displayed.
+- Open **Help > Check for updates...** to check [https://github.com/Butter-tart/8TrackStudio.git](https://github.com/Butter-tart/8TrackStudio.git) for new releases or tags. If a newer version is available, release notes and a direct release link are displayed.
 - Open **Help > GitHub Repository...** to navigate directly to the repository in your browser.
 - Open **Help > About 8T...** to see app details and version information.
 

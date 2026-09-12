@@ -63,10 +63,11 @@ def build(skip_build: bool) -> Path:
         checksum = hashlib.file_digest(handle, "sha256").hexdigest()
     (releases / f"{stem}.sha256").write_text(f"{checksum}  {artifact.name}\n", encoding="utf-8")
     packages = json.loads(subprocess.check_output([sys.executable, "-m", "pip", "list", "--format=json"], cwd=ROOT))
+    build_libc = platform.libc_ver() if operating_system != "windows" else ("", "")
     manifest = {"version": version, "channel": "unsigned-preview", "platform": operating_system,
                 "architecture": architecture, "filename": artifact.name, "sha256": checksum,
                 "bytes": artifact.stat().st_size, "python": platform.python_version(),
-                "build_os": platform.platform(), "build_libc": platform.libc_ver(),
+                "build_os": platform.platform(), "build_libc": build_libc,
                 "signing_verified": False, "redistribution_review_required": True,
                 "hardware_recording_tested": False, "packages": packages}
     (releases / f"{stem}.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

@@ -52,10 +52,10 @@ Those OS packages require your usual system package manager and administrator ac
 2. Open **Audio > Audio devices...**. Choose your input and stereo output, select the input channel (numbered from 1), and set input gain. The system default often works without changes.
 3. Edit the **Name** field above track 1's waveform and check its **REC ARM** box. Names are saved with the song; the recording status shows the track number and name. Only one track can be armed at a time.
 4. Optionally turn on **Click** and choose a tempo. The click plays during recording/playback but is never added to the exported mix.
-5. Press **Record**, play your part, then press the square **Stop** button. The waveform appears when the take is committed at Stop.
+5. Press **Record**, play your part, then press the square **Stop** button. The waveform previews the captured take while recording and is committed at Stop.
 6. Return to the start with the rewind button. Arm track 2 and record another part while track 1 plays. Repeat for up to eight tracks.
 7. Adjust track faders, pan, **M** (mute), **S** (solo), and the master volume. Multiple solo tracks can play together; mute takes precedence over solo.
-8. Choose **File > Save song** to save a `.8t` project. Choose **File > Export stereo WAV...** for a 24-bit stereo WAV you can share.
+8. Choose **File > Save song** to save a `.8t` project. Recent successful saves and opens appear in **File > Recent projects**. Choose **File > Export stereo WAV...** for a 24-bit stereo WAV you can share.
 
 Older `.porta` projects still open and save in place. **Save song as...** defaults
 to `.8t`; saving upgrades the project to format v5. Recording-offset settings and recovery
@@ -65,6 +65,10 @@ The input meter runs during recording; the output meter runs during playback
 and recording. **CLIP** stays red after an overload until the next transport start.
 Reduce input gain for input clipping, or track/master levels for output clipping.
 Digital input gain cannot repair a microphone or interface that is already clipping.
+
+In the Mixer while stopped, keys **1** through **8** arm a track, **Ctrl+1**
+through **Ctrl+8** mute a track, and **Alt+1** through **Alt+8** solo a track.
+These shortcuts do not apply while entering song text or another editable field.
 
 ### Audio interfaces
 
@@ -83,7 +87,9 @@ not provided by PortAudio, so channel numbers follow your interface's routing.
 
 The selected input/output combination is checked at the project's fixed
 44.1 kHz rate before applying. Prefer the same interface and backend for both
-directions. Device and channel choices last for the current app session.
+directions. Device and channel choices last for the current app session. If the
+selected or system-default device cannot run at 44.1 kHz, starting transport
+directs you to **Audio > Audio devices...**.
 Input monitoring is active whenever a track is REC ARMed. Recalibrate the
 recording offset after changing devices or channels.
 

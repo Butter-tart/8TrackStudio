@@ -76,6 +76,14 @@ class AudioEngine:
     def running(self) -> bool:
         return self.mode != "stopped"
 
+    def validate_audio_settings(self, input_channels: int = 0) -> None:
+        """Raise when the selected devices cannot support the requested transport."""
+        if input_channels:
+            sd.check_input_settings(device=self.input_device, channels=self.input_channel + input_channels,
+                                    dtype="float32", samplerate=SAMPLE_RATE)
+        sd.check_output_settings(device=self.output_device, channels=self.output_channel + 2,
+                                 dtype="float32", samplerate=SAMPLE_RATE)
+
     def update_monitoring(self) -> None:
         if self.mode != "stopped":
             return

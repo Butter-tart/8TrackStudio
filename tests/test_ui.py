@@ -73,6 +73,56 @@ class InterfaceTests(unittest.TestCase):
         self.assertIsNone(self.window.armed)
         self.assertIsNone(self.window.engine.monitor_track)
 
+    def test_transport_reports_actionable_audio_configuration_failure(self):
+        with patch.object(self.window.engine, "validate_audio_settings", side_effect=sd.PortAudioError("No device")), patch.object(
+                self.window.engine, "start") as start:
+            self.window.begin_transport(None)
+        start.assert_not_called()
+        self.assertIn("Choose Audio > Audio devices", self.window.statusBar().currentMessage())
+
+    def test_recording_preview_and_active_take_are_visible_in_channel_strip(self):
+        track = self.window.song.tracks[0]
+        track.active_take_name = "Lead vocal"
+        self.window.refresh()
+        self.assertEqual(self.window.strips[0].take_label.text(), "TAKE: Lead vocal")
+        self.window.engine.mode = "recording"
+        self.window.engine.record_track = 0
+        self.window.engine.record_start = 12
+        self.window.engine.recorded_frames = 3
+        self.window.engine.record_buffer = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+        self.window.tick()
+        waveform = self.window.strips[0].waveform
+        self.assertEqual(waveform.recording_start, 12)
+        self.assertEqual(waveform.recording_frames, 3)
+
+    def test_recent_projects_are_ordered_and_prune_missing_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "First.8t"
+            second = Path(directory) / "Second.porta"
+            missing = Path(directory) / "Missing.8t"
+            first.touch()
+            second.touch()
+            self.window.settings.setValue("projects/recent", [str(missing), str(first)])
+            self.window.add_recent_project(second)
+            self.assertEqual(self.window.recent_project_paths(), [second, first])
+            actions = self.window.recent_menu.actions()
+            self.assertEqual([action.text() for action in actions[:2]], ["Second.porta", "First.8t"])
+
+    def test_mixer_shortcuts_respect_focus_and_transport(self):
+        self.window.toggle_arm_shortcut(2)
+        self.assertEqual(self.window.armed, 2)
+        self.window.toggle_mute_shortcut(2)
+        self.window.toggle_solo_shortcut(2)
+        self.assertTrue(self.window.song.tracks[2].muted)
+        self.assertTrue(self.window.song.tracks[2].solo)
+        self.window.lyrics_editor.setFocus()
+        self.window.toggle_arm_shortcut(3)
+        self.assertEqual(self.window.armed, 2)
+        self.window.lyrics_editor.clearFocus()
+        self.window.engine.mode = "playing"
+        self.window.toggle_mute_shortcut(2)
+        self.assertTrue(self.window.song.tracks[2].muted)
+
     def test_stereo_conversion_waveforms_and_undo_include_takes(self):
         track = self.window.song.tracks[0]
         track.write(0, np.array([0.2, 0.4], dtype=np.float32))

@@ -32,6 +32,7 @@ from eighttrack.updates import DEFAULT_CLONE_URL, DEFAULT_REPO, DEFAULT_REPO_URL
 
 COLORS = list(DEFAULT_TRACK_COLORS)
 STYLE = build_stylesheet("light", "#168777")
+MAX_RECENT_PROJECTS = 8
 
 
 def timecode(frames: int) -> str:
@@ -584,6 +585,9 @@ class Waveform(QWidget):
         self.palette = palette or get_theme_palette()
         self.peaks = np.zeros(0)
         self.audio_frames = 0
+        self.recording_peaks = np.zeros(0)
+        self.recording_start = 0
+        self.recording_frames = 0
         self.duration = SAMPLE_RATE * 10
         self.position = 0
         self.setFixedHeight(94)
@@ -611,7 +615,23 @@ class Waveform(QWidget):
                 padded = np.pad(audio, padding)
                 self.peaks = np.max(np.abs(padded.reshape(-1, step)), axis=1)
         else:
-            self.peaks = np.zeros(0)
+            self.peaks = np.zeros((0, audio.shape[1])) if audio.ndim == 2 else np.zeros(0)
+        self.update()
+
+    def set_recording_preview(self, start: int, audio: np.ndarray) -> None:
+        self.recording_start = start
+        self.recording_frames = len(audio)
+        if len(audio):
+            step = max(1, int(np.ceil(len(audio) / 256)))
+            padding = (0, (-len(audio)) % step)
+            if audio.ndim == 2:
+                padded = np.pad(audio, (padding, (0, 0)))
+                self.recording_peaks = np.max(np.abs(padded.reshape(-1, step, 2)), axis=1)
+            else:
+                padded = np.pad(audio, padding)
+                self.recording_peaks = np.max(np.abs(padded.reshape(-1, step)), axis=1)
+        else:
+            self.recording_peaks = np.zeros((0, audio.shape[1])) if audio.ndim == 2 else np.zeros(0)
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -637,6 +657,16 @@ class Waveform(QWidget):
             painter.setPen(QPen(wave_pen, 1))
             for index, peak in enumerate(peaks):
                 horizontal = int(index / max(1, len(peaks)) * extent)
+                amplitude = min(float(peak), 1) * (lane_height / 2 - 8)
+                painter.drawLine(horizontal, int(center - amplitude), horizontal, int(center + amplitude))
+        preview_lanes = self.recording_peaks.T if self.recording_peaks.ndim == 2 else [self.recording_peaks]
+        preview_extent = self.width() * self.recording_frames / max(1, self.duration)
+        preview_start = self.width() * self.recording_start / max(1, self.duration)
+        for channel, peaks in enumerate(preview_lanes):
+            center = (channel + 0.5) * lane_height
+            painter.setPen(QPen(QColor(self.color), 2))
+            for index, peak in enumerate(peaks):
+                horizontal = int(preview_start + index / max(1, len(peaks)) * preview_extent)
                 amplitude = min(float(peak), 1) * (lane_height / 2 - 8)
                 painter.drawLine(horizontal, int(center - amplitude), horizontal, int(center + amplitude))
         painter.setPen(QPen(QColor(p.waveform_playhead), 2))
@@ -678,6 +708,10 @@ class ChannelStrip(QWidget):
         self.length_label = QLabel("00:00.000")
         self.length_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.length_label)
+        self.take_label = QLabel()
+        self.take_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.take_label.setToolTip("Active take")
+        layout.addWidget(self.take_label)
         self.arm = QCheckBox("REC ARM")
         self.arm.setStyleSheet("QCheckBox { color: #a6383c; font-weight: bold; }")
         self.arm.setToolTip("Select this track for recording; existing audio in the take region is replaced")
@@ -792,7 +826,9 @@ class ChannelStrip(QWidget):
         self.update_pan_label(pan)
         self.volume_label.setText(f"{round(self.track.volume * 100)}%")
         self.waveform.set_audio(self.track.audio)
+        self.waveform.set_recording_preview(0, np.zeros(0, dtype=np.float32))
         self.length_label.setText(timecode(len(self.track.audio)) + (" ST" if self.track.channels == 2 else ""))
+        self.take_label.setText(f"TAKE: {self.track.active_take_name}")
         unloaded = any(effect.enabled and effect.processor is None for effect in self.track.effects)
         self.effects_button.setText(f"Effects ({len(self.track.effects)})")
         self.effects_button.setStyleSheet("color: #a6383c;" if unloaded else "")
@@ -1114,6 +1150,8 @@ class StudioWindow(QMainWindow):
             action.triggered.connect(callback)
             file_menu.addAction(action)
             self.stopped_actions.append(action)
+        self.recent_menu = file_menu.addMenu("Recent projects")
+        self.refresh_recent_projects()
 
         edit_menu = self.menuBar().addMenu("Edit")
         self.undo_action = QAction("Undo last audio edit", self)
@@ -1211,6 +1249,36 @@ class StudioWindow(QMainWindow):
             action.setShortcut(shortcut)
             action.triggered.connect(callback)
             self.addAction(action)
+        for index in range(len(self.song.tracks)):
+            for shortcut, callback in [
+                (str(index + 1), lambda checked=False, track=index: self.toggle_arm_shortcut(track)),
+                (f"Ctrl+{index + 1}", lambda checked=False, track=index: self.toggle_mute_shortcut(track)),
+                (f"Alt+{index + 1}", lambda checked=False, track=index: self.toggle_solo_shortcut(track)),
+            ]:
+                action = QAction(self)
+                action.setShortcut(shortcut)
+                action.triggered.connect(callback)
+                self.addAction(action)
+
+    def shortcut_focus_is_editable(self) -> bool:
+        return isinstance(QApplication.focusWidget(), (QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit))
+
+    def toggle_arm_shortcut(self, index: int) -> None:
+        if self.engine.running or self.busy or self.shortcut_focus_is_editable():
+            return
+        self.strips[index].arm.setChecked(self.armed != index)
+
+    def toggle_mute_shortcut(self, index: int) -> None:
+        if self.engine.running or self.busy or self.shortcut_focus_is_editable():
+            return
+        strip = self.strips[index]
+        strip.mute.setChecked(not strip.mute.isChecked())
+
+    def toggle_solo_shortcut(self, index: int) -> None:
+        if self.engine.running or self.busy or self.shortcut_focus_is_editable():
+            return
+        strip = self.strips[index]
+        strip.solo.setChecked(not strip.solo.isChecked())
 
     def mark_dirty(self) -> None:
         self.dirty = True
@@ -1436,7 +1504,7 @@ class StudioWindow(QMainWindow):
         self.tick()
 
     def toggle_play(self) -> None:
-        if isinstance(QApplication.focusWidget(), (QLineEdit, QSpinBox, QDoubleSpinBox)):
+        if self.shortcut_focus_is_editable():
             return
         self.stop() if self.engine.running else self.play()
 
@@ -1462,6 +1530,15 @@ class StudioWindow(QMainWindow):
             self.begin_transport(track)
 
     def begin_transport(self, track) -> None:
+        input_channels = self.song.tracks[track].channels if track is not None else (
+            self.song.tracks[self.engine.monitor_track].channels if self.engine.monitor_track is not None else 0
+        )
+        try:
+            self.engine.validate_audio_settings(input_channels)
+        except Exception as error:
+            self.statusBar().showMessage(f"Audio is not ready. Choose Audio > Audio devices... ({error})")
+            self.update_controls()
+            return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             self.engine.start(track)
@@ -1567,6 +1644,13 @@ class StudioWindow(QMainWindow):
                 strip.level_meter.setValue(self.engine.input_peak)
             else:
                 strip.level_meter.setValue(0.0)
+        if self.engine.mode == "recording" and self.engine.record_track is not None:
+            strip = self.strips[self.engine.record_track]
+            preview = self.engine.record_buffer[:self.engine.recorded_frames]
+            strip.waveform.set_recording_preview(self.engine.record_start, preview)
+            recorded_end = self.engine.record_start + self.engine.recorded_frames
+            strip.length_label.setText(timecode(max(len(strip.track.audio), recorded_end)) +
+                                       (" ST" if strip.track.channels == 2 else ""))
         self.input_meter.setValue(min(100, int(self.engine.input_peak * 100)))
         self.output_meter.setValue(min(100, int(self.engine.output_peak * 100)))
         self.clip_label.setStyleSheet("color: #b43f46; font-weight: bold;" if self.engine.clipped else "color: #89948c;")
@@ -1742,14 +1826,51 @@ class StudioWindow(QMainWindow):
             return
         path, _ = QFileDialog.getOpenFileName(self, "Open song", "", "8T song (*.8t *.porta)")
         if path:
-            try:
-                song = load_song(path)
-                self.replace_song(song, Path(path))
-                self.statusBar().showMessage(f"Opened {Path(path).name}")
-                if any(effect.kind == "vst3" and effect.enabled for track in song.tracks for effect in track.effects):
-                    QMessageBox.information(self, "External plugins not loaded", "This song contains VST3 effects. Open each affected track's Effects rack to load trusted plugins, locate missing ones, or bypass them before playback/export.")
-            except Exception as error:
-                self.show_error("Could not open song", error)
+            self.open_project(Path(path), confirmed=True)
+
+    def recent_project_paths(self) -> list[Path]:
+        values = self.settings.value("projects/recent", [], type=list)
+        paths = []
+        for value in values:
+            path = Path(value)
+            if path.suffix.lower() in (".8t", ".porta") and path.is_file() and path not in paths:
+                paths.append(path)
+        return paths[:MAX_RECENT_PROJECTS]
+
+    def refresh_recent_projects(self) -> None:
+        paths = self.recent_project_paths()
+        self.settings.setValue("projects/recent", [str(path) for path in paths])
+        self.recent_menu.clear()
+        for path in paths:
+            action = QAction(path.name, self)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda checked=False, recent_path=path: self.open_project(recent_path))
+            self.recent_menu.addAction(action)
+        if paths:
+            self.recent_menu.addSeparator()
+            clear = QAction("Clear recent projects", self)
+            clear.triggered.connect(lambda: (self.settings.remove("projects/recent"), self.refresh_recent_projects()))
+            self.recent_menu.addAction(clear)
+        self.recent_menu.setEnabled(bool(paths))
+
+    def add_recent_project(self, path: Path) -> None:
+        path = path.resolve()
+        paths = [recent for recent in self.recent_project_paths() if recent != path]
+        self.settings.setValue("projects/recent", [str(path), *(str(recent) for recent in paths[:MAX_RECENT_PROJECTS - 1])])
+        self.refresh_recent_projects()
+
+    def open_project(self, path: Path, confirmed: bool = False) -> None:
+        if not confirmed and not self.confirm_discard():
+            return
+        try:
+            song = load_song(path)
+            self.replace_song(song, path)
+            self.add_recent_project(path)
+            self.statusBar().showMessage(f"Opened {path.name}")
+            if any(effect.kind == "vst3" and effect.enabled for track in song.tracks for effect in track.effects):
+                QMessageBox.information(self, "External plugins not loaded", "This song contains VST3 effects. Open each affected track's Effects rack to load trusted plugins, locate missing ones, or bypass them before playback/export.")
+        except Exception as error:
+            self.show_error("Could not open song", error)
 
     def save(self) -> bool:
         if self.path is None:
@@ -1766,6 +1887,7 @@ class StudioWindow(QMainWindow):
                 return False
             self.dirty = False
             self.clear_recovery()
+            self.add_recent_project(self.path)
             self.update_title()
             self.statusBar().showMessage(f"Saved {self.path.name} and {text_path.name}")
             return True

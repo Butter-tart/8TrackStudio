@@ -27,7 +27,7 @@ from eighttrack.model import (
 from eighttrack.theme import (
     ACCENT_PRESETS, DEFAULT_TRACK_COLORS, THEME_PRESETS, ThemePalette, build_stylesheet, get_theme_palette,
 )
-from eighttrack.updates import DEFAULT_CLONE_URL, DEFAULT_REPO, DEFAULT_REPO_URL, UpdateInfo, check_for_updates
+from eighttrack.updates import DEFAULT_CLONE_URL, DEFAULT_REPO, DEFAULT_REPO_URL, UpdateInfo, check_for_updates, install_update_from_github
 
 
 COLORS = list(DEFAULT_TRACK_COLORS)
@@ -70,10 +70,26 @@ class UpdateWorker(QThread):
         self.result_ready.emit(info)
 
 
+class UpdateInstallWorker(QThread):
+    result_ready = Signal(object, object)
+
+    def __init__(self, info: UpdateInfo, parent=None):
+        super().__init__(parent)
+        self.info = info
+
+    def run(self):
+        try:
+            result = install_update_from_github(self.info)
+            self.result_ready.emit(result, None)
+        except Exception as error:
+            self.result_ready.emit(None, error)
+
+
 class UpdateDialog(QDialog):
     def __init__(self, info: UpdateInfo, parent=None):
         super().__init__(parent)
         self.info = info
+        self._install_worker = None
         self.setWindowTitle("8T Update Check")
         self.resize(520, 380)
         layout = QVBoxLayout(self)
@@ -122,6 +138,12 @@ class UpdateDialog(QDialog):
         layout.addWidget(repo_link)
 
         buttons = QDialogButtonBox()
+        if info.has_update and info.download_url:
+            self.install_button = QPushButton("Download and Install")
+            self.install_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+            self.install_button.clicked.connect(self.install_update)
+            buttons.addButton(self.install_button, QDialogButtonBox.ButtonRole.ActionRole)
+
         self.open_button = QPushButton("Open in Browser")
         self.open_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
         self.open_button.clicked.connect(self.open_browser)
@@ -134,6 +156,31 @@ class UpdateDialog(QDialog):
     def open_browser(self):
         target_url = self.info.html_url or DEFAULT_REPO_URL
         QDesktopServices.openUrl(QUrl(target_url))
+
+    def install_update(self):
+        if self._install_worker is not None:
+            return
+        self.install_button.setEnabled(False)
+        self.open_button.setEnabled(False)
+        self.close_button.setEnabled(False)
+        self._install_worker = UpdateInstallWorker(self.info, self)
+        self._install_worker.result_ready.connect(self.on_install_finished)
+        self._install_worker.start()
+
+    def on_install_finished(self, result, error):
+        self.install_button.setEnabled(True)
+        self.open_button.setEnabled(True)
+        self.close_button.setEnabled(True)
+        self._install_worker = None
+        if error is not None:
+            QMessageBox.warning(self, "Update failed", str(error))
+            return
+        verified = "\nSHA-256 checksum verified." if result.checksum_verified else ""
+        QMessageBox.information(
+            self,
+            "Update downloaded",
+            f"Downloaded update to:\n{result.path}{verified}\n\nClose 8T before completing the installer or replacing the app.",
+        )
 
 
 class ThemeDialog(QDialog):

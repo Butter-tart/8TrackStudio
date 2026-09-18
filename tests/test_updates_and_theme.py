@@ -1,5 +1,6 @@
 """Tests for GitHub update checking and theme/accent customization."""
 
+import hashlib
 import io
 import json
 import os
@@ -21,9 +22,20 @@ from eighttrack.theme import (
 )
 from eighttrack.updates import (
     DEFAULT_CLONE_URL, DEFAULT_REPO, DEFAULT_REPO_URL, UpdateInfo, check_for_updates,
-    is_newer_version, parse_version,
+    download_update, install_update_from_github, is_newer_version, parse_version, select_release_asset,
 )
 from eighttrack.ui import AboutDialog, StudioWindow, ThemeDialog, UpdateDialog, UpdateWorker
+
+
+class BytesResponse(io.BytesIO):
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
 
 
 class VersionAndUpdatesTests(unittest.TestCase):
@@ -68,6 +80,56 @@ class VersionAndUpdatesTests(unittest.TestCase):
             self.assertEqual(info.published_at, "2026-09-12")
             self.assertEqual(info.download_url, "https://github.com/Butter-tart/8TrackStudio/releases/download/v0.2.0/8t.exe")
             self.assertIsNone(info.error)
+
+    def test_select_release_asset_prefers_platform_build_and_checksum(self):
+        assets = [
+            {"name": "8t-windows-x64.exe", "browser_download_url": "https://example.com/8t-windows-x64.exe"},
+            {"name": "8t-linux-x64.tar.gz.sha256", "browser_download_url": "https://example.com/8t-linux-x64.tar.gz.sha256"},
+            {"name": "8t-linux-x64.tar.gz", "browser_download_url": "https://example.com/8t-linux-x64.tar.gz"},
+        ]
+
+        download_url, checksum_url = select_release_asset(assets)
+
+        self.assertEqual(download_url, "https://example.com/8t-linux-x64.tar.gz")
+        self.assertEqual(checksum_url, "https://example.com/8t-linux-x64.tar.gz.sha256")
+
+    def test_download_update_verifies_sha256_sidecar(self):
+        update_bytes = b"fake desktop build"
+        digest = hashlib.sha256(update_bytes).hexdigest()
+        info = UpdateInfo(
+            current_version="0.1.0",
+            latest_version="0.2.0",
+            has_update=True,
+            download_url="https://example.com/8t-linux-x64.tar.gz",
+            checksum_url="https://example.com/8t-linux-x64.tar.gz.sha256",
+        )
+
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "urllib.request.urlopen",
+            side_effect=[BytesResponse(update_bytes), BytesResponse(f"{digest}  8t-linux-x64.tar.gz\n".encode("utf-8"))],
+        ):
+            result = download_update(info, destination_dir=Path(directory), timeout=1)
+            self.assertEqual(result.path.read_bytes(), update_bytes)
+
+        self.assertEqual(result.path.name, "8t-linux-x64.tar.gz")
+        self.assertTrue(result.checksum_verified)
+        self.assertFalse(result.launched)
+
+    def test_install_update_launches_downloaded_file(self):
+        info = UpdateInfo(
+            current_version="0.1.0",
+            latest_version="0.2.0",
+            has_update=True,
+            download_url="https://example.com/8t-linux-x64.tar.gz",
+        )
+
+        with tempfile.TemporaryDirectory() as directory, patch("urllib.request.urlopen", return_value=BytesResponse(b"build")), patch(
+            "eighttrack.updates.launch_update"
+        ) as mock_launch:
+            result = install_update_from_github(info, destination_dir=Path(directory), timeout=1)
+
+        self.assertTrue(result.launched)
+        mock_launch.assert_called_once_with(result.path)
 
     def test_check_for_updates_latest_release_current(self):
         payload = {
@@ -222,12 +284,14 @@ class UIThemeAndUpdatesTests(unittest.TestCase):
             release_notes="New features added",
             published_at="2026-09-12",
             html_url="https://github.com/Butter-tart/8TrackStudio/releases/tag/v0.2.0",
+            download_url="https://github.com/Butter-tart/8TrackStudio/releases/download/v0.2.0/8t.exe",
         )
         dialog = UpdateDialog(info, parent=self.window)
         self.addCleanup(dialog.deleteLater)
         labels = [l.text() for l in dialog.findChildren(QLabel)]
         self.assertTrue(any("A new version of 8T is available" in t for t in labels))
         self.assertTrue(any("Installed version: v0.1.0" in t for t in labels))
+        self.assertTrue(any(button.text() == "Download and Install" for button in dialog.findChildren(QPushButton)))
 
         with patch("eighttrack.ui.QDesktopServices.openUrl") as mock_open:
             dialog.open_browser()

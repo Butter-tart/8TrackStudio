@@ -27,6 +27,7 @@ executable = EXE(
     analysis.datas,
     [],
     name="8t",
+    exclude_binaries=True,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
